@@ -9,4 +9,5 @@
  /usr/share/arduino/hardware/arduino/cores/arduino/Printable.h \
  /usr/share/arduino/hardware/arduino/cores/arduino/new.h \
  /usr/share/arduino/hardware/arduino/variants/standard/pins_arduino.h \
- /usr/share/arduino/libraries/EEPROM/EEPROM.h
+ /usr/share/arduino/libraries/EEPROM/EEPROM.h \
+ /usr/share/arduino/libraries/SPI/SPI.h lib/MCP23S17/MCP23S17.h

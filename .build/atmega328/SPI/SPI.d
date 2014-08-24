@@ -1,4 +1,6 @@
-.build/atmega328/src/trigger_riot.d .build/atmega328/src/trigger_riot.o: .build/atmega328/src/trigger_riot.cpp \
+.build/atmega328/SPI/SPI.d .build/atmega328/SPI/SPI.o: /usr/share/arduino/libraries/SPI/SPI.cpp \
+ /usr/share/arduino/hardware/arduino/variants/standard/pins_arduino.h \
+ /usr/share/arduino/libraries/SPI/SPI.h \
  /usr/share/arduino/hardware/arduino/cores/arduino/Arduino.h \
  /usr/share/arduino/hardware/arduino/cores/arduino/binary.h \
  /usr/share/arduino/hardware/arduino/cores/arduino/WCharacter.h \
@@ -7,7 +9,4 @@
  /usr/share/arduino/hardware/arduino/cores/arduino/Stream.h \
  /usr/share/arduino/hardware/arduino/cores/arduino/Print.h \
  /usr/share/arduino/hardware/arduino/cores/arduino/Printable.h \
- /usr/share/arduino/hardware/arduino/cores/arduino/new.h \
- /usr/share/arduino/hardware/arduino/variants/standard/pins_arduino.h \
- /usr/share/arduino/libraries/EEPROM/EEPROM.h \
- /usr/share/arduino/libraries/SPI/SPI.h lib/MCP23S17/MCP23S17.h
+ /usr/share/arduino/hardware/arduino/cores/arduino/new.h

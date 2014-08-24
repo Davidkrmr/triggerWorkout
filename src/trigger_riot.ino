@@ -2,39 +2,38 @@
 //Debounce switches
 //Moving average on raw ADC val instead of monitoring change of scaled val
 #include <EEPROM.h>
+#include <SPI.h>
+#include "MCP23S17.h"
 
 #define NUM_OUTPUTS 4
-#define SW_REG DDRB
+/*#define SW_REG DDRB
 #define SW_PORT PORTB
-#define SW_READ_PORT PINB
+#define SW_READ_PORT PINB*/
 #define OUT_REG DDRD
 #define OUT_PORT PORTD
 #define ALL_OFF (OUT_PORT &= ~(B11111100))
 #define ALL_ON (OUT_PORT |= (B11111100))
-#define NO_BUTTON_PRESSED B00001111
+#define NO_BUTTON_PRESSED 0xFF
 #define ADC_BITS 10
 #define ADC_DIV_SHIFT 6
 #define ADC_PROB_SHIFT 3
 #define NUM_DIVS (((1<<ADC_BITS))>>ADC_DIV_SHIFT)
 #define RAND_SEED_ADC_PIN 5
-#define SW1 B00001110
-#define SW2 B00001101
-#define SW3 B00001011
-#define SW4 B00000111
+#define SW1 B11111110
+#define SW2 B11111101
+#define SW3 B11111011
+#define SW4 B11110111
 #define D_CLICK_TIME 250
 #define DIV_EEPROM_ADDR_ST 0;
 #define PROB_EEPROM_ADDR_OFFSET 5
 #define SW_DEBOUNCE 25
 
-#define max(a,b) (((a)>(b))?(a):(b))
-#define min(a,b) (((a)<(b))?(a):(b))
 
-#define IN_RANGE(min,max,val) (((val) < (min)) ? (min) : (((val) > (max)) ? (max) : (val)))
+uint8_t divtable[NUM_DIVS] = {1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 32, 64, 128};
 
-uint8_t divtable[NUM_DIVS] = {1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 16, 32, 64, 128};
-
-unsigned long prevTime;
-unsigned long currTime;
+unsigned long clkPrevTime;
+unsigned long clkCurrTime;
+unsigned long outPrevTime[4];
 
 //Random variables
 uint8_t randNum;
@@ -57,12 +56,17 @@ const uint8_t s4 = 3;
 //Array holding division for each output
 uint8_t divs[NUM_OUTPUTS] = {1, 1, 1, 1};
 
-uint8_t outState;
+uint8_t outState[4];
+uint8_t clkOutState;
 uint8_t output;
 
-uint8_t trigTime = 20;
+uint32_t trigTime[4] = {20, 20, 20, 20};
+uint16_t trigAdc[4];
+uint16_t clkTrigTime = 20;
 uint8_t clock;
+
 unsigned long counter;
+
 unsigned long dClickInt1;
 unsigned long dClickInt2;
 
@@ -74,18 +78,29 @@ uint8_t compareDiv;
 uint8_t compareProb;
 uint8_t divWait;
 uint8_t probWait;
-uint8_t buttonPressed;
-	
-uint8_t check_buttons;
-uint8_t lastCheckButtons;
-uint8_t button;
+
+struct buttonType
+{
+	uint8_t currButtonState;
+	uint8_t prevButtonState;
+	uint8_t buttonPressed;
+	uint8_t dClickDetected;
+}buttons;
+
 uint8_t b2i;
-uint8_t dClickDetected;
 unsigned long dbTimer;
+
+uint8_t eepromReadFlag;
+uint8_t eepromWriteFlag;
+
+uint8_t probLengthToggle;
+uint8_t probLengthToggleFlag;
+
+uint16_t bpm;
 
 int checkProb(uint8_t num, uint8_t comp)
 {
-	return (num >= comp) ? 1 : 0;
+	return (num >= comp) ? true : false;
 }
 
 void eepromRead()
@@ -146,34 +161,67 @@ uint8_t buttonReg2index(uint8_t button)
 	return i;
 }
 
+MCP expander(0);
+
+void writeDisplay(uint16_t num)
+{
+  expander.byteWrite(GPIOA, (num/1000) | (1<<4));   // write the output chip in word-mode, using our variable "value" as the argument
+  expander.byteWrite(GPIOA, ((num/100)%10) | (1<<5));   // write the output chip in word-mode, using our variable "value" as the argument
+  expander.byteWrite(GPIOA, ((num/10)%10) | (1<<6));   // write the output chip in word-mode, using our variable "value" as the argument
+  expander.byteWrite(GPIOA, (num%10) | (1<<7));   // write the output chip in word-mode, using our variable "value" as the argument
+  expander.byteWrite(GPIOA, 0);   // write the output chip in word-mode, using our variable "value" as the argument
+
+}
+
+uint16_t deJitter(uint16_t v, uint16_t test)
+{
+  if (abs(v - test) > 8) {
+    return v;
+  }
+  return test;
+}
+
 void setup()
 {
 	randomSeed(analogRead(RAND_SEED_ADC_PIN));
 
 	//clockOut
 	OUT_REG |= B11111100;
-	SW_REG |= B11110000;
-	SW_PORT |= B00001111;
+	//SW_REG |= B11110000;
+	//SW_PORT |= B00001111;
+
+	expander.pinMode(0xFF00);
+	expander.pullupMode(0xFF00);
+
+	
 }
 
 void loop()
 {
 
-	currTime = millis();
-	clockAdc = ((1<<10) - analogRead(2));
+	clkCurrTime = millis();
+	clockAdc = deJitter(((1<<10) - analogRead(2)), clockAdc);
 
 	scaledDivAdc = divtable[(analogRead(0)>>ADC_DIV_SHIFT)];
 	scaledProbAdc = (analogRead(1)>>ADC_PROB_SHIFT);
+	scaledProbAdc = map(scaledProbAdc, 0, 127, 0, 100);
+
+	for(output = 0; output<NUM_OUTPUTS; output++){
+		trigTime[output] = map(trigAdc[output], 0, 1023, 10, (clockAdc -10)) * divs[output];
+	}
 
 	if(compareDiv != scaledDivAdc){
-		divWait = 0;
+		divWait = false;
 	}
 
 	if(compareProb != scaledProbAdc){
-		probWait = 0;
+		probWait = false;
 	}
 
-	//trigTime = IN_RANGE(5, (clockAdc - 10), analogRead(3));
+	// //Get trigTimes. Use prob ADC and commented out prob. Just for test
+	// for(output = 0; output<NUM_OUTPUTS; output++){
+	// 	trigTime[output] = (map(analogRead(1), 0, 1023, 1, (clockAdc - 1))) * divs[output];
+	// }
 
 /*******************************************************************
 *Monitor button read register. If any b is pressed, indicate with 
@@ -181,90 +229,146 @@ void loop()
 *for the selected outport until a pot is changed.
 *Convert value of register to index.
 *******************************************************************/
-	check_buttons = (SW_READ_PORT & B00001111);
+	buttons.currButtonState = expander.byteRead(GPIOB);
 
-	if(check_buttons != NO_BUTTON_PRESSED){
+	if(buttons.currButtonState != NO_BUTTON_PRESSED){
 
-		if (check_buttons != lastCheckButtons) {
+		if (buttons.currButtonState != buttons.prevButtonState) {
 			dbTimer = millis();
 		}
 
 		if((millis() - dbTimer) > SW_DEBOUNCE) {
 
-			b2i = buttonReg2index(check_buttons);
+			b2i = buttonReg2index(buttons.currButtonState);
 
 			dClickInt1 = millis();
 
-			if(((dClickInt1 - dClickInt2) < D_CLICK_TIME) && !dClickDetected){
-				dClickDetected = 1;
+			if(((dClickInt1 - dClickInt2) < D_CLICK_TIME) && !buttons.dClickDetected){
+				buttons.dClickDetected = true;
 				divs[b2i] = 1;
 				prob[b2i] = 0;
 			}
 
 			else{
-				if(!buttonPressed){
-					buttonPressed = 1;
+				if(!buttons.buttonPressed){
+					buttons.buttonPressed = true;
 					compareDiv = scaledDivAdc;
 					compareProb = scaledProbAdc;
-					divWait = 1;
-					probWait = 1;
+					divWait = true;
+					probWait = true;
 				}
 
 				if(!divWait){
 					divs[b2i] = scaledDivAdc;
+					writeDisplay(scaledDivAdc);
 				}
 				if(!probWait){
-					prob[b2i] = scaledProbAdc;
+					if(!probLengthToggle) {
+						prob[b2i] = scaledProbAdc;
+						writeDisplay(scaledProbAdc);
+						}
+					else
+						trigAdc[b2i] = analogRead(1);
+
 				}
 			}
 		}
 	}
 	else{
 		dClickInt2 = dClickInt1;
-		buttonPressed = 0;
-		dClickDetected = 0;
+		buttons.buttonPressed = false;
+		buttons.dClickDetected = false;
+		writeDisplay(bpm);
 	}
 
 
 	//Write to eeprom if button 3&4 are pressed.
-	if((!(SW_READ_PORT & (1<<s4))) && (!(SW_READ_PORT & (1<<s3)))){
-		eepromWrite();
+	if((!(buttons.currButtonState & (1<<s4))) && (!(buttons.currButtonState & (1<<s3)))){
+		if (!eepromWriteFlag) {
+			eepromWrite();
+			eepromWriteFlag = true;
+		}
+	}
+	else {
+		eepromWriteFlag = false;
 	}
 
-	if((!(SW_READ_PORT & (1<<s1))) && (!(SW_READ_PORT & (1<<s2)))){
-		eepromRead();
+	if((!(buttons.currButtonState & (1<<s2))) && (!(buttons.currButtonState & (1<<s1)))){
+		if (!eepromReadFlag) {
+			eepromRead();
+			eepromReadFlag = true;
+		}
 	}
+	else {
+		eepromReadFlag = false;
+	}
+
+	if((!(buttons.currButtonState & (1<<s4))) && (!(buttons.currButtonState & (1<<s1)))){
+		if (!probLengthToggleFlag) {
+			probLengthToggle ^= 1;
+			probLengthToggleFlag = true;
+		}
+	}
+	else {
+		probLengthToggleFlag = false;
+	}
+
+
 
 	//Master clock
-	if((currTime - prevTime) > clockAdc){
+	if((clkCurrTime - clkPrevTime) > clockAdc){
 		clock = HIGH;
-		prevTime = currTime;
+		clkPrevTime = clkCurrTime;
 	}
 
-	//Turn on 
+/*********************************************************************************************
+*If a clock is received, loop through outputs, check the divisions selected for the current out,
+*check the probability stored for current out, if all ok -> turn on and set the outstate to HIGH
+**********************************************************************************************/ 
+
 	if(clock == HIGH){
 		clock = LOW;
-		outState = HIGH;
 
-		randNum = random(127);
+		randNum = random(100);
 
 		OUT_PORT |= (1<<clockOut);
+		clkOutState = HIGH;
 
 
 		for(output=0; output<NUM_OUTPUTS; output++)
 		{
 			if(((counter % divs[output]) == 0) && checkProb(randNum, prob[output])){
 				OUT_PORT |= (1<<out[output]);
+				outState[output] = HIGH;
+				outPrevTime[output] = clkPrevTime;
 			}
 		}
 		counter++;
 	}	
-	//Turn off
-	if((outState == HIGH) && (currTime - prevTime) > trigTime){		
-			OUT_PORT = ALL_OFF;
-			outState = LOW;
+
+/*********************************************************************************************
+*Loop through outputs, check if ON, then compare trigTime. If the trig/gate has been ON longer
+*than the trigTime stored in trigTime array, turn output OFF
+*
+*The master clock out has a fixed trig length.
+**********************************************************************************************/
+
+	for(output = 0; output<NUM_OUTPUTS; output++)
+	{
+		if ((outState[output] == HIGH) && (clkCurrTime - outPrevTime[output]) > trigTime[output]){
+			OUT_PORT &= ~(1<<out[output]);
+			outState[output] = LOW;
+		}
 	}
 
-	lastCheckButtons = check_buttons;
+	if ((clkOutState == HIGH) && (clkCurrTime - clkPrevTime) > clkTrigTime){
+		if (!probLengthToggle) {
+			OUT_PORT &= ~(1<<clockOut);
+		}
+	}
+
+//Store last state of buttons/switches
+	buttons.prevButtonState = buttons.currButtonState;
+	bpm = 60000 / clockAdc;
 }
 
