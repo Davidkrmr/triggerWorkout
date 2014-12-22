@@ -119,7 +119,7 @@ void loop()
 
 	clkCurrTime = millis();
 
-	clockAdc = deJitter(((1<<10) - analogRead(2)), clockAdc);
+	clockAdc = ((1<<10) - analogRead(2));
 	scaledDivAdc = divtable[(analogRead(0)>>ADC_DIV_SHIFT)];
 	scaledProbAdc = map((analogRead(1)>>ADC_PROB_SHIFT), 0, 127, 0, 100);
 
@@ -352,12 +352,4 @@ void writeDisplay(uint16_t num)
   	expander.byteWrite(GPIOA, d1 | (1<<7));
 	expander.byteWrite(GPIOA, 0);   
 
-}
-
-uint16_t deJitter(uint16_t v, uint16_t test)
-{
-  if (abs(v - test) > 8) {
-    return v;
-  }
-  return test;
 }
