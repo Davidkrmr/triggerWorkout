@@ -1,6 +1,10 @@
 //Todo
-//Debounce switches
-//Moving average on raw ADC val instead of monitoring change of scaled val
+//
+//BUGS:
+//FIX !divWait etc. When both pots moved on same button press, both IFs are true..
+
+
+
 #include <EEPROM.h>
 #include <SPI.h>
 #include "MCP23S17.h"
@@ -32,7 +36,7 @@
 #define GATE_PROB_TOGGLE		4
 
 
-uint8_t divtable[NUM_DIVS] = {1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 32, 64, 128};
+uint8_t divtable[NUM_DIVS] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 32, 64, 128};
 
 unsigned long clkPrevTime;
 unsigned long clkCurrTime;
@@ -66,7 +70,7 @@ uint8_t output;
 uint32_t trigTime[4] = {20, 20, 20, 20};
 uint16_t trigAdc[4];
 uint16_t clkTrigTime = 20;
-uint8_t clock;
+uint8_t inClock;
 
 unsigned long counter;
 
@@ -76,11 +80,10 @@ unsigned long dClickInt2;
 uint16_t clockAdc;
 uint8_t scaledDivAdc;
 uint8_t scaledProbAdc;
+uint16_t val;
 
 uint8_t compareDiv;
 uint8_t compareProb;
-uint8_t divWait;
-uint8_t probWait;
 
 struct buttonType
 {
@@ -97,24 +100,13 @@ uint8_t probLengthToggle;
 uint8_t flagReg;
 uint16_t bpm;
 
-int checkProb();
-void eepromRead();
-void eepromWrite();
-void runLightsDown();
-uint8_t buttonReg2index();
-void writeDisplay();
-uint16_t deJitter();
-
 MCP expander(0);
 
 void setup()
 {
 	randomSeed(analogRead(RAND_SEED_ADC_PIN));
 
-	//clockOut
 	OUT_REG |= B11111100;
-	//SW_REG |= B11110000;
-	//SW_PORT |= B00001111;
 
 	expander.pinMode(0xFF00);
 	expander.pullupMode(0xFF00);
@@ -135,23 +127,15 @@ void loop()
 		trigTime[output] = map(trigAdc[output], 0, 1023, 10, (clockAdc -10)) * divs[output];
 	}
 
-	if(compareDiv != scaledDivAdc){
-		divWait = false;
-	}
-
-	if(compareProb != scaledProbAdc){
-		probWait = false;
-	}
-
+	
 /*******************************************************************
 *Monitor button read register. If any b is pressed, indicate with 
 *buttonPress and set wait flags. These will keep the current settings
 *for the selected outport until a pot is changed.
 *Convert value of register to index.
 *******************************************************************/
-	pButtons->currButtonState = expander.byteRead(GPIOB);
 
-	if(pButtons->currButtonState != NO_BUTTON_PRESSED){
+	if(checkButtons()){
 
 		if (pButtons->currButtonState != pButtons->prevButtonState) {
 			dbTimer = millis();
@@ -159,7 +143,7 @@ void loop()
 
 		if((millis() - dbTimer) > SW_DEBOUNCE) {
 
-			b2i = buttonReg2index(pButtons->currButtonState);
+			b2i = buttonReg2index();
 
 			dClickInt1 = millis();
 
@@ -174,23 +158,25 @@ void loop()
 					pButtons->buttonPressed = true;
 					compareDiv = scaledDivAdc;
 					compareProb = scaledProbAdc;
-					divWait = true;
-					probWait = true;
+					val = divs[b2i];
 				}
 
-				if(!divWait){
+				if(compareDiv != scaledDivAdc){
 					divs[b2i] = scaledDivAdc;
-					writeDisplay(scaledDivAdc);
+					compareDiv = scaledDivAdc;
+					val = scaledDivAdc;
 				}
-				if(!probWait){
+				if(compareProb != scaledProbAdc){
 					if(!probLengthToggle) {
 						prob[b2i] = scaledProbAdc;
-						writeDisplay(scaledProbAdc);
+						compareProb = scaledProbAdc;
+						val = scaledProbAdc;
 						}
 					else
 						trigAdc[b2i] = analogRead(1);
 
 				}
+				writeDisplay(val);
 			}
 		}
 	}
@@ -201,7 +187,6 @@ void loop()
 		flagReg = 0;
 		writeDisplay(bpm);
 	}
-
 
 	//Write to eeprom if button 3&4 are pressed.
 	if(pButtons->currButtonState == EEPROM_WRITE){
@@ -225,25 +210,24 @@ void loop()
 		}
 	}
 	
-	//Master clock
+	//Master inClock
 	if((clkCurrTime - clkPrevTime) > clockAdc){
-		clock = HIGH;
+		inClock = HIGH;
 		clkPrevTime = clkCurrTime;
 	}
 
 /*********************************************************************************************
-*If a clock is received, loop through outputs, check the divisions selected for the current out,
+*If a inClock is received, loop through outputs, check the divisions selected for the current out,
 *check the probability stored for current out, if all ok -> turn on and set the outstate to HIGH
 **********************************************************************************************/ 
 
-	if(clock == HIGH){
-		clock = LOW;
+	if(inClock == HIGH){
+		inClock = LOW;
 
 		randNum = random(100);
 
 		OUT_PORT |= (1<<clockOut);
 		clkOutState = HIGH;
-
 
 		for(output=0; output<NUM_OUTPUTS; output++)
 		{
@@ -260,7 +244,7 @@ void loop()
 *Loop through outputs, check if ON, then compare trigTime. If the trig/gate has been ON longer
 *than the trigTime stored in trigTime array, turn output OFF
 *
-*The master clock out has a fixed trig length.
+*The master inClock out has a fixed trig length.
 **********************************************************************************************/
 
 	for(output = 0; output<NUM_OUTPUTS; output++)
@@ -271,7 +255,7 @@ void loop()
 		}
 	}
 
-	if ((clkOutState == HIGH) && (clkCurrTime - clkPrevTime) > clkTrigTime){
+	if((clkOutState == HIGH) && (clkCurrTime - clkPrevTime) > clkTrigTime){
 		if (!probLengthToggle) {
 			OUT_PORT &= ~(1<<clockOut);
 		}
@@ -282,15 +266,17 @@ void loop()
 	bpm = 60000 / clockAdc;
 }
 
-
-
-
-
 /*********************************************************************************************
 *FUNCTIONS
 **********************************************************************************************/
 
-int checkProb(uint8_t num, uint8_t comp)
+uint8_t checkButtons()
+{
+	pButtons->currButtonState = expander.byteRead(GPIOB);
+	return pButtons->currButtonState != NO_BUTTON_PRESSED;
+}
+
+uint8_t checkProb(uint8_t num, uint8_t comp)
 {
 	return (num >= comp) ? true : false;
 }
@@ -303,7 +289,7 @@ void eepromRead()
 		divs[i] = EEPROM.read(i);
 		prob[i] = EEPROM.read(i+PROB_EEPROM_ADDR_OFFSET);
 	}
-	runLightsDown();
+	runLights();
 }
 
 void eepromWrite()
@@ -314,10 +300,10 @@ void eepromWrite()
 		EEPROM.write(i, divs[i]);
 		EEPROM.write(i + PROB_EEPROM_ADDR_OFFSET, prob[i]);
 	}
-	runLightsDown();
+	runLights();
 }
 
-void runLightsDown()
+void runLights()
 {
 	uint8_t i;
 
@@ -331,26 +317,22 @@ void runLightsDown()
 	}
 }
 
-
-uint8_t buttonReg2index(uint8_t button)
+uint8_t buttonReg2index()
 {
-	uint8_t i;
-
-	switch(button){
+	switch(pButtons->currButtonState){
 		case SW1:
-			i = 0;
+			return 0;
 		break;
 		case SW2:
-			i = 1;
+			return 1;
 		break;
 		case SW3:
-			i = 2;
+			return 2;
 		break;
 		case SW4:
-			i = 3;
+			return 3;
 		break;
 	}
-	return i;
 }
 
 void writeDisplay(uint16_t num)
@@ -366,10 +348,9 @@ void writeDisplay(uint16_t num)
   		expander.byteWrite(GPIOA, d3 | (1<<5));
   	if(d2 || (num > 99))   
   		expander.byteWrite(GPIOA, d2 | (1<<6));  
-  	if(d1 || (num > 9)) 
-  		expander.byteWrite(GPIOA, d1 | (1<<7));
-
-  expander.byteWrite(GPIOA, 0);   
+  	
+  	expander.byteWrite(GPIOA, d1 | (1<<7));
+	expander.byteWrite(GPIOA, 0);   
 
 }
 

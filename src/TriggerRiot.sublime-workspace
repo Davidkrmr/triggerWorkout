@@ -4,6 +4,26 @@
 		"selected_items":
 		[
 			[
+				"sc",
+				"scaledProbAdc"
+			],
+			[
+				"comp",
+				"compareProb"
+			],
+			[
+				"sca",
+				"scaledDivAdc"
+			],
+			[
+				"check",
+				"checkButtons"
+			],
+			[
+				"uint",
+				"uint8_t"
+			],
+			[
 				"pro",
 				"probWait"
 			],
@@ -28,20 +48,12 @@
 				"deJitter"
 			],
 			[
-				"uint",
-				"uint16_t"
-			],
-			[
 				"clk",
 				"clkCurrTime"
 			],
 			[
 				"curr",
 				"clkCurrTime"
-			],
-			[
-				"sca",
-				"scaledProbAdc"
 			],
 			[
 				"scaled",
@@ -152,20 +164,12 @@
 				"eepromReadFlag"
 			],
 			[
-				"sc",
-				"scaledDivAdc"
-			],
-			[
 				"OUTP",
 				"OUT_PORT"
 			],
 			[
 				"raw",
 				"rawProbAdc"
-			],
-			[
-				"comp",
-				"compWait"
 			],
 			[
 				"com",
@@ -211,7 +215,7 @@
 			"file": "trigger_riot.ino",
 			"settings":
 			{
-				"buffer_size": 8596,
+				"buffer_size": 8091,
 				"line_ending": "Unix"
 			}
 		}
@@ -231,7 +235,7 @@
 				"Package Control: Install Package"
 			]
 		],
-		"width": 575.0
+		"width": 449.0
 	},
 	"console":
 	{
@@ -252,6 +256,7 @@
 	},
 	"file_history":
 	[
+		"/home/kloo/.config/sublime-text-3/Packages/User/Default (Linux).sublime-keymap",
 		"/home/kloo/programming/web/meanTest/package.json",
 		"/home/kloo/programming/arduino/expandertest/lib/MCP23S17.cpp",
 		"/home/kloo/programming/arduino/expandertest/lib/MCP23S17.h",
@@ -259,7 +264,6 @@
 		"/home/kloo/programming/arduino/expandertest/src/sketch.ino",
 		"/home/kloo/programming/c/testSheet.c",
 		"/home/kloo/programming/arduino/lcd_fsm/src/sketch.ino",
-		"/home/kloo/.config/sublime-text-3/Packages/User/Default (Linux).sublime-keymap",
 		"/home/kloo/.config/sublime-text-3/Packages/Default/Default (Linux).sublime-keymap",
 		"/home/kloo/.config/sublime-text-3/Packages/User/C.sublime-settings",
 		"/home/kloo/programming/arduino/lcd_fsm/src/sketch.c",
@@ -267,7 +271,7 @@
 	],
 	"find":
 	{
-		"height": 26.0
+		"height": 35.0
 	},
 	"find_in_files":
 	{
@@ -281,6 +285,15 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"clock",
+			"clock ",
+			"	}",
+			"flagreg",
+			"expander",
+			"temp",
+			"1000",
+			"writeDisplay",
+			"writeDis",
 			"setup",
 			"divtable",
 			"DIVTABLE	",
@@ -325,6 +338,7 @@
 		"regex": false,
 		"replace_history":
 		[
+			"mstrClk",
 			"SPI"
 		],
 		"reverse": false,
@@ -345,15 +359,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 8596,
+						"buffer_size": 8091,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								6496,
-								6496
+								3737,
+								3737
 							]
 						],
 						"settings":
@@ -362,7 +376,7 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 4513.0,
+						"translation.y": 2675.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 0,
@@ -413,7 +427,7 @@
 	"project": "TriggerRiot.sublime-project",
 	"replace":
 	{
-		"height": 48.0
+		"height": 64.0
 	},
 	"save_all_on_build": true,
 	"select_file":
@@ -429,6 +443,10 @@
 		"height": 500.0,
 		"selected_items":
 		[
+			[
+				"",
+				"~/programming/scripts/python/dspicCalc.sublime-project"
+			]
 		],
 		"width": 380.0
 	},
