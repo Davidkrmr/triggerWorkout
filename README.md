@@ -1,4 +1,4 @@
-triggerWorkout
+triggerWorkout - PRE-ALPHA
 ==============
 
 ###Arduino based gate/trigger eurorack module
