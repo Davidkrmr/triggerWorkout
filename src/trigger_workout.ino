@@ -102,10 +102,11 @@ unsigned long db_timer;
 uint8_t prob_length_toggle;
 uint8_t flag_reg;
 uint16_t bpm;
+uint16_t prng_seed;
 
 void setup()
 {
-	randomSeed(analogRead(RAND_SEED_ADC_PIN));
+	prng_seed = analogRead(RAND_SEED_ADC_PIN);
 	OUT_REG |= B11111100;
 	init_spi();
 	pButtons = &buttons;
@@ -332,7 +333,7 @@ uint8_t checkButtons()
 	return pButtons->curr_btn_state != NO_BUTTON_PRESSED;
 }
 
-uint8_t checkProb(uint8_t num, uint8_t comp)
+uint8_t checkProb(uint16_t num, uint16_t comp)
 {
 	return (num >= comp) ? true : false;
 }
@@ -395,4 +396,52 @@ void writeDisplay(uint16_t num)
 	}
 
 	i += 1;
+}
+
+//Faster?? test..
+void writeDisplay2(uint16_t val)
+{
+    uint16_t num[4] = {1000,100,10,1};
+    uint8_t p = 0;
+    uint8_t i;
+    uint8_t cnt;
+
+    for(i = 0; i < 4; i++)
+    {
+        cnt = 0;
+        
+        while(val >= num[i]){
+            cnt += 1;
+            val -= num[i];
+        }
+    }
+}  
+
+uint16_t calc_bmp()
+{
+	static uint8_t i = 0;
+	static uint8_t bmp = 0;
+
+	if(i >= 50){
+		i = 0;
+		bmp = (60000 / clock_adc);
+	}
+
+	i++;
+	return bpm;
+}
+
+uint16_t xabc()
+{
+	static uint16_t x = 0;
+	static uint16_t a = prng_seed;
+	static uint16_t b = 0;
+	static uint16_t c = 0;
+
+	x++;
+	a = (a^c^x);
+	b = (b+a);
+	c = (c+(b>>1)^a);
+
+	return c & 0x3FF;
 }
