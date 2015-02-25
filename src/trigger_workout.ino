@@ -9,20 +9,17 @@
 #define NO_BUTTON_PRESSED 		0xFF
 #define ADC_BITS 				10
 #define ADC_DIV_SHIFT 			6
-#define ADC_PROB_SHIFT 			3
 #define NUM_DIVS 				(((1<<ADC_BITS))>>ADC_DIV_SHIFT)
 #define RAND_SEED_ADC_PIN 		5
 #define SW1 					B11111110
 #define SW2 					B11111101
 #define SW3 					B11111011
 #define SW4 					B11110111
-#define D_CLICK_TIME 			250
 #define EEPROM_WRITE 			B11110011
 #define EEPROM_READ 			B11111100
 #define DIV_EEPROM_ADDR_ST 		0
 #define PROB_EEPROM_ADDR_OFFSET 5
 #define SW_DEBOUNCE 			25
-#define GATE_LENGTH				B11110110
 #define EEPROM_WRITE_FLAG		1
 #define EEPROM_READ_FLAG		2
 #define GATE_PROB_TOGGLE		4
@@ -38,92 +35,93 @@
 #define GPIOA					0x12
 #define GPIOB					0x13
 
-
-uint8_t div_table[NUM_DIVS] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 32, 64, 128};
-
-unsigned long clk_prev_time;
-unsigned long clk_curr_time;
-unsigned long out_prev_time[4];
-
-//Random variables
-uint8_t rand_num;
-uint8_t prob[NUM_OUTPUTS] = {0, 0, 0, 0};
-
 //Output pins
 const uint8_t clk_out = 2;
 const uint8_t o1 = 3;
 const uint8_t o2 = 4;
 const uint8_t o3 = 5;
 const uint8_t o4 = 6;
-uint8_t out[NUM_OUTPUTS] = {o1, o2, o3, o4};
+const uint8_t out[NUM_OUTPUTS] = {o1, o2, o3, o4};
 
-//Select switches pins
+//Pushbutton pins
 const uint8_t s1 = 0;
 const uint8_t s2 = 1;
 const uint8_t s3 = 2;
 const uint8_t s4 = 3;
 
-//Array holding division for each output
-uint8_t divs[NUM_OUTPUTS] = {1, 1, 1, 1};
+uint8_t div_table[NUM_DIVS] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 32, 64, 128};
 
-uint8_t out_state[4];
+unsigned long clk_prev_time;
+unsigned long clk_curr_time;
+
 uint8_t clk_out_state;
-uint8_t output;
+uint16_t min_trig_time = 10;
+uint8_t mstr_clk;
 
-uint32_t trig_time[4] = {20, 20, 20, 20};
-uint16_t trig_adc[4];
-uint16_t clk_trig_time = 20;
-uint8_t clk_in;
+unsigned long db_timer;
 
+//Rand num for probability check
+uint8_t rand_num;
+
+//Main cntr to keep track of divisions
 unsigned long cntr;
 
-unsigned long d_click_int1;
-unsigned long d_click_int2;
-
-uint16_t clock_adc;
-uint8_t scaled_div_adc;
-uint8_t scaled_prob_adc;
+//Display val
 uint16_t val;
 
-uint8_t compare_div;
-uint8_t compare_prob;
+uint8_t flag_reg;
 
-struct b_type
+struct button_type
 {
 	uint8_t curr_btn_state;
 	uint8_t prev_btn_state;
 	uint8_t button_pressed;
-	uint8_t d_click_detected;
 }buttons, *pButtons;
 
-uint8_t button_index;
-unsigned long db_timer;
+uint8_t button;
 
-uint8_t prob_length_toggle;
-uint8_t flag_reg;
-uint16_t bpm;
-uint16_t prng_seed;
+struct output_type
+{
+	uint8_t divs;
+	uint8_t div_compare;
+	uint8_t prob;
+	uint8_t prob_compare;
+	uint32_t trig_time;
+	unsigned long pos_edge;
+	uint8_t state;
+} output[NUM_OUTPUTS];
+
+struct adc_type
+{
+	uint16_t clk;
+	uint8_t scaled_div;
+	uint16_t prob;
+} adc;
 
 void setup()
 {
-	prng_seed = analogRead(RAND_SEED_ADC_PIN);
+
 	OUT_REG |= B11111100;
 	init_spi();
+	init_outputs();
+	randomSeed(analogRead(RAND_SEED_ADC_PIN));
 	pButtons = &buttons;
 }
 
 void loop()
 {
 
+	uint8_t i;
+
 	clk_curr_time = millis();
 
-	clock_adc = ((1<<10) - analogRead(2));
-	scaled_div_adc = div_table[(analogRead(0)>>ADC_DIV_SHIFT)];
-	scaled_prob_adc = map((analogRead(1)>>ADC_PROB_SHIFT), 0, 127, 0, 100);
+	adc.clk = ((1<<10) - analogRead(2));
+	adc.scaled_div = div_table[(analogRead(0)>>ADC_DIV_SHIFT)];
+	adc.prob = analogRead(1)>>2;
 
-	for(output = 0; output<NUM_OUTPUTS; output++){
-		trig_time[output] = map(trig_adc[output], 0, 1023, 10, (clock_adc -10)) * divs[output];
-	}
+	// for(i = 0; i<NUM_OUTPUTS; i++){
+	// 	output[i].trig_time = map(trig_adc[i], 0, 1023, 10, (adc.clk -10)) * output[i].divs;
+	// }
 
 	
 /*******************************************************************
@@ -141,39 +139,33 @@ void loop()
 
 		if((millis() - db_timer) > SW_DEBOUNCE) {
 
-			button_index = get_button();
+			button = get_button();
 
 			if(!pButtons->button_pressed) {
 				pButtons->button_pressed = true;
-				compare_div = scaled_div_adc;
-				compare_prob = scaled_prob_adc;
-				val = divs[button_index];
+				output[button].div_compare = adc.scaled_div;
+				output[button].prob_compare = adc.prob;
+				val = output[button].divs;
 			}
 
-			if(compare_div != scaled_div_adc) {
-				divs[button_index] = scaled_div_adc;
-				compare_div = scaled_div_adc;
-				val = scaled_div_adc;
+			if(output[button].div_compare != adc.scaled_div) {
+				output[button].divs = adc.scaled_div;
+				output[button].div_compare = adc.scaled_div;
+				val = adc.scaled_div;
 			}
 
-			if(compare_prob != scaled_prob_adc) {
-				if(!prob_length_toggle) {
-					prob[button_index] = scaled_prob_adc;
-					compare_prob = scaled_prob_adc;
-					val = scaled_prob_adc;
-					} 
-				else
-					trig_adc[button_index] = analogRead(1);
-
-				}
+			if(output[button].prob_compare != adc.prob) {
+				output[button].prob = adc.prob;
+				output[button].prob_compare = adc.prob;
+				val = (100 * (adc.prob + 1)) >> 8;
+				} 
 			writeDisplay(val);
 			}
 		}
 	else{
-		d_click_int2 = d_click_int1;
 		pButtons->button_pressed = false;
 		flag_reg = 0;
-		writeDisplay(60000 / clock_adc);
+		writeDisplay(calc_bmp());
 	}
 
 	//Poll eeprom write/read
@@ -190,39 +182,32 @@ void loop()
 			flag_reg |= EEPROM_READ_FLAG;
 		}
 	}
-
-	if(pButtons->curr_btn_state == GATE_LENGTH){
-		if (!(flag_reg & GATE_PROB_TOGGLE)) {
-			prob_length_toggle ^= 1;
-			flag_reg |= GATE_PROB_TOGGLE;
-		}
-	}
 	
-	//Master clk_in
-	if((clk_curr_time - clk_prev_time) > clock_adc){
-		clk_in = HIGH;
+	//Master mstr_clk
+	if((clk_curr_time - clk_prev_time) > adc.clk){
+		mstr_clk = HIGH;
 		clk_prev_time = clk_curr_time;
 	}
 
 /*********************************************************************************************
-*If a clk_in is received, loop through outputs, check the divisions selected for the current out,
+*If a mstr_clk is received, loop through outputs, check the divisions selected for the current out,
 *check the probability stored for current out, if all ok -> turn on and set the out_state to HIGH
 **********************************************************************************************/ 
 
-	if(clk_in == HIGH){
-		clk_in = LOW;
+	if(mstr_clk == HIGH){
+		mstr_clk = LOW;
 
-		rand_num = random(100);
+		rand_num = random(255);
 
 		OUT_PORT |= (1<<clk_out);
 		clk_out_state = HIGH;
 
-		for(output=0; output<NUM_OUTPUTS; output++)
+		for(i=0; i<NUM_OUTPUTS; i++)
 		{
-			if(((cntr % divs[output]) == 0) && checkProb(rand_num, prob[output])){
-				OUT_PORT |= (1<<out[output]);
-				out_state[output] = HIGH;
-				out_prev_time[output] = clk_prev_time;
+			if(((cntr % output[i].divs) == 0) && checkProb(rand_num, output[i].prob)){
+				OUT_PORT |= (1<<out[i]);
+				output[i].state = HIGH;
+				output[i].pos_edge = clk_prev_time;
 			}
 		}
 		cntr++;
@@ -230,23 +215,21 @@ void loop()
 
 /*********************************************************************************************
 *Loop through outputs, check if ON, then compare trig_time. If the trig/gate has been ON longer
-*than the trig_time stored in trig_time array, turn output OFF
+*than the trig_time stored in trig_time array, turn i OFF
 *
-*The master clk_in out has a fixed trig length.
+*The master mstr_clk out has a fixed trig length.
 **********************************************************************************************/
 
-	for(output = 0; output<NUM_OUTPUTS; output++)
+	for(i = 0; i<NUM_OUTPUTS; i++)
 	{
-		if ((out_state[output] == HIGH) && (clk_curr_time - out_prev_time[output]) > trig_time[output]){
-			OUT_PORT &= ~(1<<out[output]);
-			out_state[output] = LOW;
+		if ((output[i].state == HIGH) && (clk_curr_time - output[i].pos_edge) > output[i].trig_time){
+			OUT_PORT &= ~(1<<out[i]);
+			output[i].state = LOW;
 		}
 	}
 
-	if((clk_out_state == HIGH) && (clk_curr_time - clk_prev_time) > clk_trig_time){
-		if (!prob_length_toggle) {
+	if((clk_out_state == HIGH) && (clk_curr_time - clk_prev_time) > min_trig_time){
 			OUT_PORT &= ~(1<<clk_out);
-		}
 	}
 
 //Store last state of buttons/switches
@@ -305,8 +288,8 @@ void eepromRead()
 	uint8_t i;
 
 	for(i=0; i<NUM_OUTPUTS; i++){
-		divs[i] = EEPROM.read(i);
-		prob[i] = EEPROM.read(i+PROB_EEPROM_ADDR_OFFSET);
+		output[i].divs = EEPROM.read(i);
+		output[i].prob = EEPROM.read(i+PROB_EEPROM_ADDR_OFFSET);
 	}
 	runLights();
 }
@@ -316,8 +299,8 @@ void eepromWrite()
 	uint8_t i;
 
 	for(i=0; i<NUM_OUTPUTS; i++){
-		EEPROM.write(i, divs[i]);
-		EEPROM.write(i + PROB_EEPROM_ADDR_OFFSET, prob[i]);
+		EEPROM.write(i, output[i].divs);
+		EEPROM.write(i + PROB_EEPROM_ADDR_OFFSET, output[i].prob);
 	}
 	runLights();
 }
@@ -326,6 +309,13 @@ void eepromWrite()
 /*********************************************************************************************
 *OTHER
 **********************************************************************************************/
+
+void init_outputs()
+{
+	uint8_t i;
+	for(i = 0; i < NUM_OUTPUTS; i++)
+		output[i] = {1, 0, 0, 0, 10, 0, LOW};
+}
 
 uint8_t checkButtons()
 {
@@ -371,38 +361,10 @@ uint8_t get_button()
 	}
 }
 
-void writeDisplay(uint16_t num)
-{
-	static uint8_t i = 0;
 
-	if(i >= 20)
-	{
-		i = 0;
-
-		uint8_t d1 = num % 10;
-		uint8_t d2 = (num/10) % 10;
-		uint8_t d3 = (num/100)%10;
-		uint8_t d4 = num/1000;
-
-		if(d4)
-	  		spi_write_byte(GPIOA, d4 | (1<<4));   
-	  	if(d3 || (num > 999))
-	  		spi_write_byte(GPIOA, d3 | (1<<5));
-	  	if(d2 || (num > 99))   
-	  		spi_write_byte(GPIOA, d2 | (1<<6));  
-	  	
-	  	spi_write_byte(GPIOA, d1 | (1<<7));
-		spi_write_byte(GPIOA, 0);   
-	}
-
-	i += 1;
-}
-
-//Faster?? test..
-void writeDisplay2(uint16_t val)
+void writeDisplay(uint16_t val)
 {
     uint16_t num[4] = {1000,100,10,1};
-    uint8_t p = 0;
     uint8_t i;
     uint8_t cnt;
 
@@ -414,34 +376,22 @@ void writeDisplay2(uint16_t val)
             cnt += 1;
             val -= num[i];
         }
+        spi_write_byte(GPIOA, cnt | (1<<(i + 4)));
     }
+    spi_write_byte(GPIOA, 0); 
 }  
 
 uint16_t calc_bmp()
 {
-	static uint8_t i = 0;
-	static uint8_t bmp = 0;
+	static uint16_t bpm;
+	static uint8_t i;
 
-	if(i >= 50){
+	if(i >= 50)
+	{
+		bpm = (60000 / adc.clk);
 		i = 0;
-		bmp = (60000 / clock_adc);
 	}
 
 	i++;
 	return bpm;
-}
-
-uint16_t xabc()
-{
-	static uint16_t x = 0;
-	static uint16_t a = prng_seed;
-	static uint16_t b = 0;
-	static uint16_t c = 0;
-
-	x++;
-	a = (a^c^x);
-	b = (b+a);
-	c = (c+(b>>1)^a);
-
-	return c & 0x3FF;
 }
