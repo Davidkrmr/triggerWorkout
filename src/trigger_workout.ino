@@ -11,10 +11,6 @@
 #define ADC_DIV_SHIFT           6
 #define NUM_DIVS                (((1<<ADC_BITS))>>ADC_DIV_SHIFT)
 #define RAND_SEED_ADC_PIN       5
-#define SW1                     B11111110
-#define SW2                     B11111101
-#define SW3                     B11111011
-#define SW4                     B11110111
 #define EEPROM_WRITE            B11110011
 #define EEPROM_READ             B11111100
 #define DIV_EEPROM_ADDR_ST      0
@@ -43,19 +39,19 @@ const uint8_t o3 = 5;
 const uint8_t o4 = 6;
 const uint8_t out[NUM_OUTPUTS] = {o1, o2, o3, o4};
 
-//Pushbutton pins
-const uint8_t s1 = 0;
-const uint8_t s2 = 1;
-const uint8_t s3 = 2;
-const uint8_t s4 = 3;
+const uint8_t sw1 = 0x01;
+const uint8_t sw2 = 0x02;
+const uint8_t sw3 = 0x04;
+const uint8_t sw4 = 0x08;
 
-uint8_t div_table[NUM_DIVS] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 32, 64, 128};
+const uint16_t min_trig_time = 10;
+
+const uint8_t div_table[NUM_DIVS] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 32, 64, 128};
 
 unsigned long clk_prev_time;
 unsigned long clk_curr_time;
 
 uint8_t clk_out_state;
-uint16_t min_trig_time = 10;
 uint8_t mstr_clk;
 
 unsigned long db_timer;
@@ -76,7 +72,7 @@ struct button_type
     uint8_t curr_btn_state;
     uint8_t prev_btn_state;
     uint8_t button_pressed;
-}buttons, *pButtons;
+}buttons;
 
 uint8_t button;
 
@@ -86,7 +82,6 @@ struct output_type
     uint8_t div_compare;
     uint8_t prob;
     uint8_t prob_compare;
-    uint32_t trig_time;
     unsigned long pos_edge;
     uint8_t state;
 } output[NUM_OUTPUTS];
@@ -100,12 +95,10 @@ struct adc_type
 
 void setup()
 {
-
     OUT_REG |= B11111100;
     init_spi();
     init_outputs();
     randomSeed(analogRead(RAND_SEED_ADC_PIN));
-    pButtons = &buttons;
 }
 
 void loop()
@@ -125,20 +118,20 @@ void loop()
 
     if(checkButtons()){
 
-        if (pButtons->curr_btn_state != pButtons->prev_btn_state) {
+        if (buttons.curr_btn_state != buttons.prev_btn_state) {
             db_timer = millis();
         }
 
         if((millis() - db_timer) > SW_DEBOUNCE) {
 
             //Only read if we are actually going to change vals
-            adc.scaled_div = div_table[(analogRead(0)>>ADC_DIV_SHIFT)];
+            adc.scaled_div = div_table[(analogRead(0) >> ADC_DIV_SHIFT)];
             adc.prob = analogRead(1)>>2;
 
             button = get_button();
 
-            if(!pButtons->button_pressed) {
-                pButtons->button_pressed = true;
+            if(!buttons.button_pressed) {
+                buttons.button_pressed = true;
                 output[button].div_compare = adc.scaled_div;
                 output[button].prob_compare = adc.prob;
                 val = output[button].divs;
@@ -155,24 +148,24 @@ void loop()
                 output[button].prob_compare = adc.prob;
                 val = (100 * (adc.prob + 1)) >> 8;
                 } 
-            writeDisplay(val);
             }
         }
     else{
-        pButtons->button_pressed = false;
+        buttons.button_pressed = false;
         flag_reg = 0;
-        writeDisplay(calc_bmp());
+        val = calc_bmp();
     }
 
+
     //Poll eeprom write/read
-    if(pButtons->curr_btn_state == EEPROM_WRITE) {
+    if(buttons.curr_btn_state == EEPROM_WRITE) {
         if(!(flag_reg & EEPROM_WRITE_FLAG)) {
             eepromWrite();
             flag_reg |= EEPROM_WRITE_FLAG;
         }
     }
 
-    if(pButtons->curr_btn_state == EEPROM_READ) {
+    if(buttons.curr_btn_state == EEPROM_READ) {
         if(!(flag_reg & EEPROM_READ_FLAG)) {
             eepromRead();
             flag_reg |= EEPROM_READ_FLAG;
@@ -198,7 +191,7 @@ void loop()
         OUT_PORT |= (1<<clk_out);
         clk_out_state = HIGH;
 
-        for(i=0; i<NUM_OUTPUTS; i++) {
+        for(i = 0; i < NUM_OUTPUTS; i++) {
             if(((cntr % output[i].divs) == 0) && checkProb(rand_num, output[i].prob)) {
                 OUT_PORT |= (1<<out[i]);
                 output[i].state = HIGH;
@@ -210,7 +203,7 @@ void loop()
 
 
     for(i = 0; i<NUM_OUTPUTS; i++) {
-        if((output[i].state == HIGH) && (clk_curr_time - output[i].pos_edge) > output[i].trig_time) {
+        if((output[i].state == HIGH) && (clk_curr_time - output[i].pos_edge) > min_trig_time) {
             OUT_PORT &= ~(1<<out[i]);
             output[i].state = LOW;
         }
@@ -220,7 +213,8 @@ void loop()
             OUT_PORT &= ~(1<<clk_out);
     }
 
-    pButtons->prev_btn_state = buttons.curr_btn_state;
+    buttons.prev_btn_state = buttons.curr_btn_state;
+    writeDisplay(val);
 }
 
 /*********************************************************************************************
@@ -285,7 +279,7 @@ void eepromWrite()
 {
     uint8_t i;
 
-    for( i = 0; i < NUM_OUTPUTS; i++){
+    for( i = 0; i < NUM_OUTPUTS; i++) {
         EEPROM.write(i, output[i].divs);
         EEPROM.write(i + PROB_EEPROM_ADDR_OFFSET, output[i].prob);
     }
@@ -302,14 +296,14 @@ void init_outputs()
     uint8_t i;
 
     for(i = 0; i < NUM_OUTPUTS; i++) {
-        output[i] = {1, 0, 0, 0, 10, 0, LOW};
+        output[i] = {1, 1, 0, 0, 0, LOW};
     }
 }
 
 uint8_t checkButtons()
 {
-    pButtons->curr_btn_state = spi_read_byte(GPIOB);
-    return pButtons->curr_btn_state != NO_BUTTON_PRESSED;
+    buttons.curr_btn_state = spi_read_byte(GPIOB);
+    return buttons.curr_btn_state != NO_BUTTON_PRESSED;
 }
 
 uint8_t checkProb(uint16_t num, uint16_t comp)
@@ -326,7 +320,7 @@ void runLights()
         OUT_PORT |= (1<<out[i]);
         delay(100);
     }
-    for(i=0; i<NUM_OUTPUTS; i++){
+    for(i = 0; i < NUM_OUTPUTS; i++){
         OUT_PORT &= ~(1<<out[i]);
         //Just test, will not use delay later on.
         delay(100);
@@ -335,17 +329,18 @@ void runLights()
 
 uint8_t get_button()
 {
-    switch(pButtons->curr_btn_state){
-        case SW1:
+    buttons.curr_btn_state = ~buttons.curr_btn_state;
+    switch(buttons.curr_btn_state){
+        case sw1:
             return 0;
         break;
-        case SW2:
+        case sw2:
             return 1;
         break;
-        case SW3:
+        case sw3:
             return 2;
         break;
-        case SW4:
+        case sw4:
             return 3;
         break;
     }
@@ -354,21 +349,26 @@ uint8_t get_button()
 
 void writeDisplay(uint16_t val)
 {
+    static uint8_t intvl;
     uint16_t num[4] = {1000,100,10,1};
     uint8_t i;
     uint8_t cnt;
 
-    for(i = 0; i < 4; i++)
-    {
-        cnt = 0;
-        
-        while(val >= num[i]){
-            cnt += 1;
-            val -= num[i];
+    if(intvl > 10){
+        intvl = 0;
+        for(i = 0; i < 4; i++)
+        {
+            cnt = 0;
+            
+            while(val >= num[i]){
+                cnt += 1;
+                val -= num[i];
+            }
+            spi_write_byte(GPIOA, cnt | (1<<(i + 4)));
         }
-        spi_write_byte(GPIOA, cnt | (1<<(i + 4)));
+        spi_write_byte(GPIOA, 0);
     }
-    spi_write_byte(GPIOA, 0); 
+    intvl++;
 }  
 
 uint16_t calc_bmp()
