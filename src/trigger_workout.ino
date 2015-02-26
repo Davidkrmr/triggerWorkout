@@ -19,6 +19,8 @@
 #define EEPROM_WRITE_FLAG       1
 #define EEPROM_READ_FLAG        2
 #define GATE_PROB_TOGGLE        4
+#define NUM_READINGS_SHIFT      4
+#define NUM_READINGS            (1<<NUM_READINGS_SHIFT)
 
 //SPI defines
 #define ADDR_ENABLE             0b00001000
@@ -353,18 +355,23 @@ void writeDisplay(uint16_t val)
     uint16_t num[4] = {1000,100,10,1};
     uint8_t i;
     uint8_t cnt;
+    uint8_t prev;
+
+    val > 1111 ? val = 1111 : val;
 
     if(intvl > 10){
         intvl = 0;
-        for(i = 0; i < 4; i++)
-        {
+        prev = 0;
+        for(i = 0; i < 4; i++) {
             cnt = 0;
-            
             while(val >= num[i]){
                 cnt += 1;
                 val -= num[i];
             }
-            spi_write_byte(GPIOA, cnt | (1<<(i + 4)));
+            prev |= cnt;
+            //Dont pad digits > val with zeros
+            if(prev)
+                spi_write_byte(GPIOA, cnt | (1<<(i + 4)));
         }
         spi_write_byte(GPIOA, 0);
     }
@@ -376,12 +383,29 @@ uint16_t calc_bmp()
     static uint16_t bpm;
     static uint8_t i;
 
-    if(i >= 50)
-    {
+    if(i >= 30) {
         bpm = (60000 / adc.clk);
         i = 0;
     }
-
     i++;
-    return bpm;
+    return avg(bpm);
+}
+
+uint16_t avg(uint16_t val)
+{
+
+    static uint16_t readings[NUM_READINGS];
+    static uint16_t total = 0;
+    static uint8_t i = 0;
+
+    total -= readings[i];
+    readings[i] = val;
+    total += readings[i];
+    i++;
+
+    if(i >= NUM_READINGS) {
+        i = 0;
+    }
+
+    return total >> NUM_READINGS_SHIFT;
 }
